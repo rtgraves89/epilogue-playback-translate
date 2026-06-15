@@ -1,0 +1,1834 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<script>
+  (function() {
+    try {
+      var saved = localStorage.getItem('pt-theme');
+      if (saved === 'light') document.documentElement.setAttribute('data-theme', 'light');
+    } catch (e) {}
+  })();
+</script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Playback Translator</title>
+<script src='https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/5.0.4/tesseract.min.js'></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&display=swap');
+
+  :root {
+    --bg: #0a0a0f;
+    --surface: #12121a;
+    --surface2: #1a1a26;
+    --border: #2a2a3d;
+    --accent: #00e5ff;
+    --accent-dim: rgba(0, 229, 255, 0.12);
+    --accent-glow: rgba(0, 229, 255, 0.35);
+    --green: #39ff14;
+    --text: #e8e8f0;
+    --text-muted: #6b6b8a;
+    --red: #ff4466;
+    --yellow: #ffd600;
+  }
+
+  html[data-theme="light"] {
+    --bg: #f4f5fa;
+    --surface: #ffffff;
+    --surface2: #eceef5;
+    --border: #d8dae6;
+    --accent: #0090a8;
+    --accent-dim: rgba(0, 144, 168, 0.10);
+    --accent-glow: rgba(0, 144, 168, 0.25);
+    --green: #1a9e34;
+    --text: #1a1a26;
+    --text-muted: #6b6b8a;
+    --red: #d6294a;
+    --yellow: #b8860b;
+  }
+
+  html[data-theme="light"] body { background: var(--bg); }
+  html[data-theme="light"] #cropPreviewCanvas,
+  html[data-theme="light"] .screen-preview-inner,
+  html[data-theme="light"] #previewCanvas { background: #111; }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Space Grotesk', sans-serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  header {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 18px 28px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    flex-shrink: 0;
+  }
+
+  .logo-mark {
+    width: 36px; height: 36px;
+    border: 2px solid var(--accent);
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'Space Mono', monospace;
+    font-size: 14px; color: var(--accent); font-weight: 700;
+    box-shadow: 0 0 12px rgba(0,229,255,0.35);
+    flex-shrink: 0;
+  }
+
+  header h1 { font-size: 16px; font-weight: 600; }
+  header p { font-size: 12px; color: var(--text-muted); font-family: 'Space Mono', monospace; margin-top: 1px; }
+
+  .status-pill {
+    display: flex; align-items: center; gap: 7px;
+    font-size: 12px; font-family: 'Space Mono', monospace; color: var(--text-muted);
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 20px; padding: 5px 12px;
+    flex-shrink: 0;
+  }
+
+  .header-spacer { flex: 1; }
+
+  .icon-btn {
+    width: 36px; height: 36px; border-radius: 8px;
+    border: 1px solid var(--border); background: var(--surface2);
+    color: var(--text); font-size: 16px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: border-color 0.2s, background 0.2s; flex-shrink: 0;
+  }
+  .icon-btn:hover { border-color: var(--accent); background: var(--accent-dim); }
+
+  #operatorSelect {
+    width: 100%; background: var(--bg); border: 1px solid var(--border);
+    border-radius: 6px; padding: 8px 12px; color: var(--text);
+    font-family: 'Space Mono', monospace; font-size: 12px; outline: none;
+    cursor: pointer; appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%2300e5ff' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 12px center;
+  }
+  #operatorSelect option { background: var(--bg); color: var(--text); }
+
+  .status-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--text-muted);
+    transition: background 0.3s, box-shadow 0.3s;
+  }
+  .status-dot.active { background: var(--green); box-shadow: 0 0 8px var(--green); animation: pulse 2s infinite; }
+  .status-dot.scanning { background: var(--yellow); box-shadow: 0 0 8px var(--yellow); }
+
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes slideIn { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+
+  main {
+    display: grid;
+    grid-template-columns: 320px 1fr;
+    flex: 1;
+    overflow: hidden;
+    min-height: 0;
+  }
+
+  aside {
+    border-right: 1px solid var(--border);
+    background: var(--surface);
+    display: flex; flex-direction: column;
+    overflow-y: auto;
+  }
+
+  .panel { padding: 18px 20px; border-bottom: 1px solid var(--border); }
+
+  .panel-label {
+    font-size: 10px; font-family: 'Space Mono', monospace;
+    color: var(--text-muted); letter-spacing: 0.12em;
+    text-transform: uppercase; margin-bottom: 12px;
+  }
+
+  .field { margin-bottom: 12px; }
+  .field label { display: block; font-size: 12px; color: var(--text-muted); margin-bottom: 6px; font-family: 'Space Mono', monospace; }
+  .field input {
+    width: 100%; background: var(--bg); border: 1px solid var(--border);
+    border-radius: 6px; padding: 9px 12px; color: var(--text);
+    font-family: 'Space Mono', monospace; font-size: 12px; outline: none;
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  .field input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); }
+  .field input::placeholder { color: var(--text-muted); }
+  .field textarea {
+    width: 100%; background: var(--bg); border: 1px solid var(--border);
+    border-radius: 6px; padding: 9px 12px; color: var(--text);
+    font-family: 'Space Mono', monospace; font-size: 12px; outline: none;
+    transition: border-color 0.2s, box-shadow 0.2s;
+    resize: vertical; line-height: 1.6;
+  }
+  .field textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); }
+  .field textarea::placeholder { color: var(--text-muted); }
+  .field select {
+    width: 100%; background: var(--bg); border: 1px solid var(--border);
+    border-radius: 6px; padding: 9px 12px; color: var(--text);
+    font-family: 'Space Mono', monospace; font-size: 12px; outline: none;
+    transition: border-color 0.2s, box-shadow 0.2s;
+    cursor: pointer; appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%2300e5ff' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 12px center;
+  }
+  .field select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); }
+  .field select option { background: var(--bg); color: var(--text); }
+
+  .slider-row { display: flex; align-items: center; gap: 10px; }
+  input[type=range] { flex: 1; accent-color: var(--accent); height: 4px; }
+  .slider-val { font-family: 'Space Mono', monospace; font-size: 12px; color: var(--accent); min-width: 40px; text-align: right; }
+
+  .btn {
+    width: 100%; padding: 11px; border-radius: 7px; border: none;
+    font-family: 'Space Grotesk', sans-serif; font-size: 14px; font-weight: 600;
+    cursor: pointer; transition: all 0.2s; letter-spacing: 0.02em;
+  }
+  .btn-primary { background: var(--accent); color: #000; }
+  .btn-primary:hover { filter: brightness(1.1); box-shadow: 0 0 16px rgba(0,229,255,0.35); }
+  .btn-secondary {
+    background: transparent; color: var(--accent);
+    border: 1px solid var(--accent); margin-top: 8px;
+  }
+  .btn-secondary:hover { background: var(--accent-dim); }
+  .btn-stop { background: transparent; color: var(--red); border: 1px solid var(--red); margin-top: 8px; }
+  .btn-stop:hover { background: rgba(255,68,102,0.1); }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-toggle.is-active { background: transparent; color: var(--red); border: 1px solid var(--red); }
+  .btn-toggle.is-active:hover { background: rgba(255,68,102,0.1); filter: none; box-shadow: none; }
+
+  .char-counter { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; display: flex; align-items: center; gap: 12px; }
+  .char-bar-wrap { flex: 1; background: var(--bg); border-radius: 4px; height: 6px; overflow: hidden; }
+  .char-bar { height: 100%; background: var(--accent); border-radius: 4px; transition: width 0.4s; width: 0%; }
+  .char-bar.warning { background: var(--yellow); }
+  .char-bar.danger { background: var(--red); }
+  .char-text { font-family: 'Space Mono', monospace; font-size: 11px; color: var(--text-muted); white-space: nowrap; }
+
+  /* ── Settings modal ── */
+  #settingsModal {
+    display: none;
+    position: fixed; inset: 0; z-index: 250;
+    background: rgba(0,0,0,0.6);
+    align-items: center; justify-content: center;
+  }
+  #settingsModal.active { display: flex; }
+
+  .settings-panel {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; width: 360px; max-width: 90vw;
+    max-height: 85vh; overflow-y: auto;
+    box-shadow: 0 8px 40px rgba(0,0,0,0.5);
+  }
+
+  .settings-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 20px; border-bottom: 1px solid var(--border);
+    font-size: 13px; font-family: 'Space Mono', monospace;
+    letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-muted);
+  }
+
+  .settings-body { padding: 20px; }
+
+  .usage-overview {
+    display: flex; flex-direction: column; gap: 10px;
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 6px; padding: 12px;
+  }
+  .usage-row { display: flex; flex-direction: column; gap: 4px; }
+  .usage-row-head {
+    display: flex; align-items: center; justify-content: space-between;
+    font-size: 11px; font-family: 'Space Mono', monospace;
+  }
+  .usage-row-name { color: var(--text); }
+  .usage-row-name.is-current::after {
+    content: ' (current)';
+    color: var(--accent);
+    font-size: 10px;
+  }
+  .usage-row-value { color: var(--text-muted); }
+  .usage-row-bar-wrap {
+    width: 100%; height: 5px; background: var(--surface2);
+    border-radius: 3px; overflow: hidden;
+  }
+  .usage-row-bar {
+    height: 100%; background: var(--accent); border-radius: 3px;
+    transition: width 0.3s, background 0.3s;
+  }
+  .usage-row-bar.warning { background: var(--yellow); }
+  .usage-row-bar.danger { background: var(--red); }
+  .usage-row-reset { font-size: 10px; color: var(--text-muted); font-family: 'Space Mono', monospace; }
+
+  .masked-field { position: relative; }
+  .masked-field input { padding-right: 40px; }
+  .masked-toggle {
+    position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+    width: 28px; height: 28px; border: none; background: transparent;
+    color: var(--text-muted); cursor: pointer; font-size: 14px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 5px;
+  }
+  .masked-toggle:hover { color: var(--accent); background: var(--accent-dim); }
+
+  /* ── Preview area header ── */
+  .preview-area-header {
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .preview-area-title {
+    font-size: 10px; font-family: 'Space Mono', monospace;
+    color: var(--text-muted); letter-spacing: 0.12em; text-transform: uppercase;
+  }
+  .btn-clear {
+    padding: 6px 12px; border-radius: 6px;
+    background: transparent; color: var(--text-muted);
+    border: 1px solid var(--border);
+    font-family: 'Space Mono', monospace; font-size: 11px;
+    cursor: pointer; transition: all 0.2s;
+  }
+  .btn-clear:hover { border-color: var(--red); color: var(--red); background: rgba(255,68,102,0.06); }
+
+  .crop-btn-skip { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+  .crop-btn-skip:hover { background: var(--accent-dim); }
+
+  /* ── Right panel ── */
+  .content { display: flex; flex-direction: column; overflow: hidden; background: var(--bg); }
+
+  /* ── Crop modal ── */
+  #cropModal {
+    display: none;
+    position: fixed; inset: 0; z-index: 200;
+    background: rgba(0,0,0,0.85);
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+  }
+  #cropModal.active { display: flex; }
+
+  .crop-instructions {
+    color: var(--accent);
+    font-family: 'Space Mono', monospace;
+    font-size: 13px;
+    margin-bottom: 16px;
+    text-align: center;
+    line-height: 1.8;
+  }
+
+  #cropContainer {
+    position: relative;
+    cursor: crosshair;
+    border: 2px solid var(--border);
+    user-select: none;
+    max-width: 90vw;
+    max-height: 70vh;
+    overflow: hidden;
+    line-height: 0;
+  }
+
+  #cropVideoCanvas {
+    display: block;
+    max-width: 90vw;
+    max-height: 70vh;
+  }
+
+  #cropOverlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    display: block;
+    max-width: 90vw;
+    max-height: 70vh;
+    touch-action: none;
+  }
+
+  /* Dimming outside selection */
+  .crop-dim {
+    position: absolute;
+    background: rgba(0,0,0,0.6);
+    pointer-events: none;
+  }
+
+  #cropSelection {
+    position: absolute;
+    border: 2px solid var(--accent);
+    box-shadow: 0 0 0 1px rgba(0,229,255,0.3), 0 0 20px rgba(0,229,255,0.2);
+    pointer-events: none;
+  }
+
+  .crop-actions {
+    display: flex; gap: 12px; margin-top: 16px;
+  }
+
+  .crop-btn {
+    padding: 10px 24px; border-radius: 7px; border: none;
+    font-family: 'Space Grotesk', sans-serif; font-size: 14px; font-weight: 600;
+    cursor: pointer;
+  }
+  .crop-btn-confirm { background: var(--accent); color: #000; }
+  .crop-btn-confirm:hover { filter: brightness(1.1); }
+  .crop-btn-cancel { background: transparent; color: var(--text-muted); border: 1px solid var(--border); }
+  .crop-btn-cancel:hover { border-color: var(--text-muted); color: var(--text); }
+
+  /* ── Crop preview strip ── */
+  #cropPreviewWrap {
+    display: none;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    margin-top: 0;
+  }
+
+  #cropPreviewWrap .strip-header {
+    padding: 8px 12px;
+    font-size: 10px; font-family: 'Space Mono', monospace;
+    color: var(--text-muted); letter-spacing: 0.1em; text-transform: uppercase;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+
+  #cropPreviewCanvas {
+    display: block;
+    width: 100%;
+    background: #000;
+    image-rendering: pixelated;
+  }
+
+  /* ── Preview + feed ── */
+  .preview-area {
+    flex: 1; overflow-y: auto; padding: 20px;
+    display: flex; flex-direction: column; gap: 14px;
+  }
+
+  .screen-preview {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; overflow: hidden; display: none;
+  }
+
+  .screen-preview-header {
+    padding: 10px 14px; border-bottom: 1px solid var(--border);
+    font-size: 11px; font-family: 'Space Mono', monospace; color: var(--text-muted);
+    display: flex; align-items: center; gap: 8px;
+  }
+
+  #previewCanvas {
+    display: block;
+    max-width: 100%;
+    max-height: 220px;
+    width: auto;
+    height: auto;
+    margin: 0 auto;
+    background: #111;
+  }
+
+  .screen-preview-inner {
+    display: flex;
+    justify-content: center;
+    background: #000;
+  }
+
+  .empty-state {
+    flex: 1; display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 12px; color: var(--text-muted); text-align: center; padding: 40px;
+  }
+  .empty-icon { font-size: 48px; opacity: 0.3; }
+  .empty-state h3 { font-size: 15px; color: var(--text-muted); font-weight: 500; }
+  .empty-state p { font-size: 13px; line-height: 1.6; max-width: 280px; }
+
+  .translation-feed { display: flex; flex-direction: column; gap: 12px; }
+
+  .t-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; overflow: hidden; animation: slideIn 0.25s ease;
+  }
+  .t-card.new-translation { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent-dim), 0 0 20px var(--accent-dim); }
+  .t-card-row { display: grid; grid-template-columns: 1fr 1fr; }
+  .t-half { padding: 14px 16px; }
+  .t-half:first-child { border-right: 1px solid var(--border); }
+  .t-lang { font-size: 10px; font-family: 'Space Mono', monospace; color: var(--text-muted); letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 8px; }
+  .t-text-ja { font-size: 15px; line-height: 1.7; }
+  .t-text-en { font-size: 14px; line-height: 1.7; color: var(--accent); font-weight: 500; }
+  .t-time { padding: 6px 16px; font-size: 10px; font-family: 'Space Mono', monospace; color: var(--text-muted); border-top: 1px solid var(--border); background: var(--surface2); }
+
+  .scanning-badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 11px; font-family: 'Space Mono', monospace; color: var(--yellow);
+    padding: 4px 10px; background: rgba(255,214,0,0.08);
+    border-radius: 20px; border: 1px solid rgba(255,214,0,0.2);
+  }
+  .scan-spinner { width: 8px; height: 8px; border: 1px solid var(--yellow); border-top-color: transparent; border-radius: 50%; animation: spin 0.7s linear infinite; }
+
+  .toolbar {
+    padding: 12px 24px; border-top: 1px solid var(--border);
+    background: var(--surface); display: flex; align-items: center; gap: 12px; flex-shrink: 0;
+  }
+  .no-text-note { font-size: 12px; font-family: 'Space Mono', monospace; color: var(--text-muted); }
+
+  .crop-indicator {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 11px; font-family: 'Space Mono', monospace;
+    color: var(--green); padding: 3px 8px;
+    background: rgba(57,255,20,0.08); border-radius: 4px;
+    border: 1px solid rgba(57,255,20,0.2);
+  }
+
+  .toast {
+    position: fixed; bottom: 24px; right: 24px;
+    background: var(--surface); border: 1px solid var(--red);
+    border-radius: 8px; padding: 12px 16px; font-size: 13px; color: var(--red);
+    box-shadow: 0 4px 24px rgba(0,0,0,0.4); z-index: 300; max-width: 320px;
+    animation: slideIn 0.2s ease; display: none;
+  }
+
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="status-pill" id="statusPill">
+    <div class="status-dot" id="statusDot"></div>
+    <span id="statusText">idle</span>
+  </div>
+  <div class="logo-mark">翻</div>
+  <div>
+    <h1>Playback Translator</h1>
+    <p>Live Japanese → English for <span id="operatorLabel">GB Operator</span></p>
+  </div>
+  <div class="header-spacer"></div>
+  <div style="width:170px;">
+    <select id="operatorSelect" aria-label="Operator">
+      <option value="gb">GB Operator</option>
+      <option value="sn" disabled>SN Operator (Aug)</option>
+    </select>
+  </div>
+  <button class="icon-btn" id="themeToggle" title="Toggle light/dark mode" aria-label="Toggle theme">🌙</button>
+  <button class="icon-btn" id="settingsBtn" title="Settings" aria-label="Settings">⚙</button>
+</header>
+
+<main>
+  <aside>
+    <div class="panel">
+      <div class="panel-label">Screen Capture</div>
+      <button class="btn btn-toggle btn-primary" id="captureToggle">Capture Playback Window</button>
+      <button class="btn btn-secondary" id="cropBtn" disabled>✂ Set Crop Region</button>
+      <p style="font-size:11px;color:var(--text-muted);margin-top:12px;line-height:1.6;font-family:'Space Mono',monospace;">
+        After capturing, draw a box around just the dialogue area — scanning starts once a region is set.
+      </p>
+    </div>
+
+    <div class="panel">
+      <div class="panel-label">Crop Preview</div>
+      <div id="cropPreviewWrap">
+        <div class="strip-header">
+          <span>OCR region</span>
+          <span id="cropDims" style="color:var(--accent)"></span>
+        </div>
+        <canvas id="cropPreviewCanvas"></canvas>
+      </div>
+      <p id="noCropNote" style="font-size:11px;color:var(--text-muted);font-family:'Space Mono',monospace;line-height:1.6;">
+        No crop set — capture is paused until a region is set or you choose to scan full screen.
+      </p>
+    </div>
+
+    <div class="panel">
+      <div class="panel-label" id="usagePanelLabel">Daily Usage</div>
+      <div class="char-counter">
+        <div class="char-bar-wrap"><div class="char-bar" id="charBar"></div></div>
+        <span class="char-text" id="charText">0 / 10,000</span>
+      </div>
+      <p id="usageResetNote" style="font-size:10px;color:var(--text-muted);font-family:'Space Mono',monospace;margin:6px 0 0;display:none;"></p>
+    </div>
+
+    <div class="panel" style="flex:1;">
+      <div class="panel-label">Last Detected Text</div>
+      <div id="rawText" style="font-size:13px;line-height:1.8;color:var(--text-muted);font-family:'Space Mono',monospace;min-height:60px;">—</div>
+    </div>
+  </aside>
+
+  <div class="content">
+    <div class="preview-area" id="previewArea">
+      <div class="preview-area-header">
+        <span class="preview-area-title">Translations</span>
+        <button class="btn-clear" id="clearBtn">🗑 Clear Results</button>
+      </div>
+      <div class="screen-preview" id="screenPreview">
+        <div class="screen-preview-header">
+          <span>▶</span> Live capture
+          <span id="cropIndicator" style="display:none;" class="crop-indicator">✂ crop active</span>
+          <span id="scanningBadge" style="display:none;" class="scanning-badge">
+            <span class="scan-spinner"></span> scanning
+          </span>
+        </div>
+        <div class="screen-preview-inner">
+          <canvas id="previewCanvas"></canvas>
+        </div>
+      </div>
+
+      <div class="empty-state" id="emptyState">
+        <div class="empty-icon">🎮</div>
+        <h3>No capture active</h3>
+        <p>Click "Capture Playback Window", select your Playback app, then draw a box around the dialogue area when prompted.</p>
+      </div>
+
+      <div class="translation-feed" id="feed"></div>
+    </div>
+
+    <div class="toolbar">
+      <span id="toolbarStatus" class="no-text-note">Start capture to begin translating.</span>
+    </div>
+  </div>
+</main>
+
+<!-- Crop modal -->
+<div id="cropModal">
+  <div class="crop-instructions">
+    Drag to select the dialogue box area.<br>
+    <span style="color:var(--text-muted);font-size:11px;">Only this region will be scanned for Japanese text. Scanning won't start until a region is set.</span>
+  </div>
+  <div id="cropContainer">
+    <canvas id="cropVideoCanvas"></canvas>
+    <canvas id="cropOverlay"></canvas>
+  </div>
+  <div class="crop-actions">
+    <button class="crop-btn crop-btn-confirm" id="cropConfirm">Use this region</button>
+    <button class="crop-btn crop-btn-skip" id="cropSkip">Scan full screen instead</button>
+    <button class="crop-btn crop-btn-cancel" id="cropCancel">Cancel</button>
+  </div>
+</div>
+
+<!-- Settings modal -->
+<div id="settingsModal">
+  <div class="settings-panel">
+    <div class="settings-header">
+      <span>Settings</span>
+      <button class="icon-btn" id="settingsClose" aria-label="Close settings">✕</button>
+    </div>
+    <div class="settings-body">
+      <div class="field">
+        <label>OCR engine (reads the Japanese text)</label>
+        <select id="ocrSelect">
+          <option value="tesseract">Tesseract (free, local, lower accuracy on pixel fonts)</option>
+          <option value="google">Google Cloud Vision (free up to 1,000/month, much better accuracy)</option>
+          <option value="claude">Claude Vision (paid, OCR + translation combined)</option>
+        </select>
+      </div>
+      <div class="field" id="translatorField">
+        <label>Translator</label>
+        <select id="providerSelect">
+          <option value="mymemory">MyMemory (free, 10k chars/day)</option>
+          <option value="deepl">DeepL</option>
+        </select>
+      </div>
+      <div class="field" id="emailField">
+        <label>MyMemory email (for 10k chars/day)</label>
+        <input type="email" id="emailInput" placeholder="your@email.com">
+      </div>
+      <div class="field" id="deeplField" style="display:none;">
+        <label>DeepL API key</label>
+        <div class="masked-field">
+          <input type="password" id="deeplKeyInput" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx:fx">
+          <button type="button" class="masked-toggle" id="deeplKeyToggle" aria-label="Show/hide API key">👁</button>
+        </div>
+      </div>
+      <div class="field" id="deeplProxyField" style="display:none;">
+        <label>CORS proxy URL (Cloudflare Worker)</label>
+        <input type="text" id="deeplProxyInput" placeholder="https://deepl-proxy.yoursubdomain.workers.dev">
+      </div>
+      <div class="field" id="googleField" style="display:none;">
+        <label>Google Cloud Vision API key</label>
+        <div class="masked-field">
+          <input type="password" id="googleKeyInput" placeholder="AIza...">
+          <button type="button" class="masked-toggle" id="googleKeyToggle" aria-label="Show/hide API key">👁</button>
+        </div>
+      </div>
+      <div class="field" id="googleNote" style="display:none;">
+        <p style="font-size:11px;color:var(--text-muted);line-height:1.6;font-family:'Space Mono',monospace;margin:0;">
+          Free for the first 1,000 images each month (requires a Google Cloud account with billing enabled, but won't charge unless you exceed that). Vision API does the OCR; the translator above converts the result to English.
+        </p>
+      </div>
+      <div class="field" id="claudeField" style="display:none;">
+        <label>Anthropic API key</label>
+        <div class="masked-field">
+          <input type="password" id="claudeKeyInput" placeholder="sk-ant-...">
+          <button type="button" class="masked-toggle" id="claudeKeyToggle" aria-label="Show/hide API key">👁</button>
+        </div>
+      </div>
+      <div class="field" id="glossaryField" style="display:none;">
+        <label>Glossary (one term per line, e.g. "オーキド = Professor Oak")</label>
+        <textarea id="glossaryInput" rows="5" placeholder="オーキド = Professor Oak&#10;ポケモン = Pokémon&#10;ロケット団 = Team Rocket"></textarea>
+      </div>
+      <div class="field" id="claudeNote" style="display:none;">
+        <p style="font-size:11px;color:var(--text-muted);line-height:1.6;font-family:'Space Mono',monospace;margin:0;">
+          Claude reads the cropped image directly and returns both the Japanese text and an English translation in one call — generally far more accurate than OCR + MyMemory/DeepL for pixel fonts. Each scan costs a small fraction of a cent on your Anthropic account, and requires a paid Anthropic API account. Use the glossary above to lock in names/terms from a fan translation or your own preference — Claude will use these consistently instead of choosing its own.
+        </p>
+      </div>
+      <div class="field">
+        <label>Scan interval</label>
+        <div class="slider-row">
+          <input type="range" id="intervalSlider" min="1" max="10" value="3" step="0.5">
+          <span class="slider-val" id="intervalVal">3.0s</span>
+        </div>
+      </div>
+      <div class="field">
+        <label>Usage across all options</label>
+        <div id="usageOverview" class="usage-overview"></div>
+      </div>
+      <p style="font-size:11px;color:var(--text-muted);line-height:1.6;font-family:'Space Mono',monospace;">
+        These fields contain credentials — hide this panel before screen sharing.
+      </p>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ── State ──
+let stream = null;
+let videoEl = null;
+let captureInterval = null;
+let charCount = 0;
+// LIMITS keyed by translator (used when ocrSelect !== 'claude')
+const TRANSLATOR_LIMITS = {
+  mymemory: { limit: 10000, label: 'Daily Usage (MyMemory)', unit: 'chars', period: 'day', key: 'mymemory', name: 'MyMemory' },
+  deepl: { limit: 500000, label: 'Monthly Usage (DeepL free tier)', unit: 'chars', period: 'month', key: 'deepl', name: 'DeepL' }
+};
+// LIMITS for OCR-side request counting (Google Vision / Claude Vision)
+const OCR_LIMITS = {
+  google: { limit: 1000, label: 'Monthly Usage (Google Vision free tier)', unit: 'requests', period: 'month', key: 'google', name: 'Google Vision' },
+  claude: { limit: 99999, label: 'Session Usage (Claude Vision)', unit: 'requests', period: 'session', key: 'claude', name: 'Claude Vision' }
+};
+let DAILY_LIMIT = 10000;
+let USAGE_UNIT = 'chars';
+let CURRENT_CFG = TRANSLATOR_LIMITS.mymemory;
+let usageWarned = false;
+// Rolling translation context for pronoun/register continuity (Claude Vision only)
+let translationHistory = []; // [{ japanese, english }, ...]
+const MAX_HISTORY = 2;
+let lastJapaneseText = '';
+let worker = null;
+let isScanning = false;
+let lastFrameHash = null;
+let scanningStarted = false; // true once OCR interval has begun
+
+// Crop region (in video pixel coordinates)
+let cropRegion = null; // { x, y, w, h } as fractions 0-1
+
+// ── DOM ──
+const captureToggle = document.getElementById('captureToggle');
+const cropBtn = document.getElementById('cropBtn');
+const clearBtn = document.getElementById('clearBtn');
+const statusDot = document.getElementById('statusDot');
+const statusText = document.getElementById('statusText');
+const feed = document.getElementById('feed');
+const emptyState = document.getElementById('emptyState');
+const screenPreview = document.getElementById('screenPreview');
+const previewCanvas = document.getElementById('previewCanvas');
+const rawText = document.getElementById('rawText');
+const charBar = document.getElementById('charBar');
+const charText = document.getElementById('charText');
+const usagePanelLabel = document.getElementById('usagePanelLabel');
+const usageResetNote = document.getElementById('usageResetNote');
+const usageOverview = document.getElementById('usageOverview');
+const intervalSlider = document.getElementById('intervalSlider');
+const intervalVal = document.getElementById('intervalVal');
+const scanningBadge = document.getElementById('scanningBadge');
+const toolbarStatus = document.getElementById('toolbarStatus');
+const emailInput = document.getElementById('emailInput');
+const ocrSelect = document.getElementById('ocrSelect');
+const translatorField = document.getElementById('translatorField');
+const providerSelect = document.getElementById('providerSelect');
+const deeplKeyInput = document.getElementById('deeplKeyInput');
+const deeplKeyToggle = document.getElementById('deeplKeyToggle');
+const deeplProxyInput = document.getElementById('deeplProxyInput');
+const emailField = document.getElementById('emailField');
+const deeplField = document.getElementById('deeplField');
+const deeplProxyField = document.getElementById('deeplProxyField');
+const googleKeyInput = document.getElementById('googleKeyInput');
+const googleKeyToggle = document.getElementById('googleKeyToggle');
+const googleField = document.getElementById('googleField');
+const googleNote = document.getElementById('googleNote');
+const claudeKeyInput = document.getElementById('claudeKeyInput');
+const claudeKeyToggle = document.getElementById('claudeKeyToggle');
+const claudeField = document.getElementById('claudeField');
+const claudeNote = document.getElementById('claudeNote');
+const glossaryField = document.getElementById('glossaryField');
+const glossaryInput = document.getElementById('glossaryInput');
+const toast = document.getElementById('toast');
+const cropModal = document.getElementById('cropModal');
+const cropContainer = document.getElementById('cropContainer');
+const cropVideoCanvas = document.getElementById('cropVideoCanvas');
+const cropOverlayCanvas = document.getElementById('cropOverlay');
+const cropConfirm = document.getElementById('cropConfirm');
+const cropSkip = document.getElementById('cropSkip');
+const cropCancel = document.getElementById('cropCancel');
+const cropIndicator = document.getElementById('cropIndicator');
+const cropPreviewWrap = document.getElementById('cropPreviewWrap');
+const cropPreviewCanvas = document.getElementById('cropPreviewCanvas');
+const cropDims = document.getElementById('cropDims');
+const noCropNote = document.getElementById('noCropNote');
+const themeToggle = document.getElementById('themeToggle');
+const settingsBtn = document.getElementById('settingsBtn');
+const settingsModal = document.getElementById('settingsModal');
+const settingsClose = document.getElementById('settingsClose');
+const operatorSelect = document.getElementById('operatorSelect');
+const operatorLabel = document.getElementById('operatorLabel');
+
+// ── Theme ──
+function applyTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  themeToggle.textContent = theme === 'light' ? '☀️' : '🌙';
+  try { localStorage.setItem('pt-theme', theme); } catch {}
+}
+themeToggle.addEventListener('click', () => {
+  const current = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+  applyTheme(current === 'light' ? 'dark' : 'light');
+});
+(function initTheme() {
+  let saved = 'dark';
+  try { saved = localStorage.getItem('pt-theme') || 'dark'; } catch {}
+  applyTheme(saved);
+})();
+
+// ── Glossary persistence (not sensitive — safe to store) ──
+(function initGlossary() {
+  try {
+    const saved = localStorage.getItem('pt-glossary');
+    if (saved) glossaryInput.value = saved;
+  } catch {}
+})();
+glossaryInput.addEventListener('input', () => {
+  try { localStorage.setItem('pt-glossary', glossaryInput.value); } catch {}
+});
+
+// ── Pipeline choice persistence (not sensitive — safe to store) ──
+(function initPipelineChoice() {
+  try {
+    const savedOcr = localStorage.getItem('pt-ocr-engine');
+    const savedTranslator = localStorage.getItem('pt-translator');
+    if (savedOcr) ocrSelect.value = savedOcr;
+    if (savedTranslator) providerSelect.value = savedTranslator;
+  } catch {}
+})();
+ocrSelect.addEventListener('change', () => {
+  try { localStorage.setItem('pt-ocr-engine', ocrSelect.value); } catch {}
+});
+providerSelect.addEventListener('change', () => {
+  try { localStorage.setItem('pt-translator', providerSelect.value); } catch {}
+});
+
+// ── Settings modal ──
+settingsBtn.addEventListener('click', () => {
+  settingsModal.classList.add('active');
+  renderUsageOverview();
+});
+settingsClose.addEventListener('click', () => settingsModal.classList.remove('active'));
+settingsModal.addEventListener('click', e => {
+  if (e.target === settingsModal) settingsModal.classList.remove('active');
+});
+
+deeplKeyToggle.addEventListener('click', () => {
+  const showing = deeplKeyInput.type === 'text';
+  deeplKeyInput.type = showing ? 'password' : 'text';
+  deeplKeyToggle.textContent = showing ? '👁' : '🙈';
+});
+
+googleKeyToggle.addEventListener('click', () => {
+  const showing = googleKeyInput.type === 'text';
+  googleKeyInput.type = showing ? 'password' : 'text';
+  googleKeyToggle.textContent = showing ? '👁' : '🙈';
+});
+
+claudeKeyToggle.addEventListener('click', () => {
+  const showing = claudeKeyInput.type === 'text';
+  claudeKeyInput.type = showing ? 'password' : 'text';
+  claudeKeyToggle.textContent = showing ? '👁' : '🙈';
+});
+
+// ── Operator profile ──
+const OPERATORS = {
+  gb: { label: 'GB Operator' },
+  sn: { label: 'SN Operator' }
+};
+operatorSelect.addEventListener('change', () => {
+  const cfg = OPERATORS[operatorSelect.value];
+  if (cfg) operatorLabel.textContent = cfg.label;
+});
+
+// ── Slider ──
+intervalSlider.addEventListener('input', () => {
+  intervalVal.textContent = parseFloat(intervalSlider.value).toFixed(1) + 's';
+  // Apply live if scanning is already underway
+  if (scanningStarted && captureInterval) {
+    clearInterval(captureInterval);
+    captureInterval = setInterval(captureAndProcess, parseFloat(intervalSlider.value) * 1000);
+  }
+});
+
+// ── Persistent usage tracking ──
+// Each pipeline that has a meaningful cap (Google Vision, DeepL, MyMemory)
+// stores its running count in localStorage, keyed by the current period
+// (calendar month or day). When the period rolls over, the count resets
+// automatically. Claude Vision uses a session-only count (not persisted).
+function currentPeriodKey(period) {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  if (period === 'month') return `${y}-${m}`;
+  if (period === 'day') return `${y}-${m}-${d}`;
+  return 'session';
+}
+
+function loadUsage(cfg) {
+  if (cfg.period === 'session') return 0;
+  try {
+    const raw = localStorage.getItem('pt-usage-' + cfg.key);
+    if (!raw) return 0;
+    const parsed = JSON.parse(raw);
+    if (parsed.periodKey !== currentPeriodKey(cfg.period)) return 0; // rolled over
+    return parsed.count || 0;
+  } catch { return 0; }
+}
+
+function saveUsage(cfg, count) {
+  if (cfg.period === 'session') return;
+  try {
+    localStorage.setItem('pt-usage-' + cfg.key, JSON.stringify({
+      periodKey: currentPeriodKey(cfg.period),
+      count
+    }));
+  } catch {}
+}
+
+// ── Pipeline (OCR engine + translator) toggle ──
+function updatePipelineUI() {
+  const ocr = ocrSelect.value; // tesseract | google | claude
+  const isDeepl = providerSelect.value === 'deepl';
+  const isClaudeVision = ocr === 'claude';
+  const isGoogleOcr = ocr === 'google';
+
+  // Translator selection is irrelevant when Claude Vision does both
+  translatorField.style.display = isClaudeVision ? 'none' : 'block';
+
+  deeplField.style.display = (!isClaudeVision && isDeepl) ? 'block' : 'none';
+  deeplProxyField.style.display = (!isClaudeVision && isDeepl) ? 'block' : 'none';
+  emailField.style.display = (!isClaudeVision && !isDeepl) ? 'block' : 'none';
+
+  googleField.style.display = isGoogleOcr ? 'block' : 'none';
+  googleNote.style.display = isGoogleOcr ? 'block' : 'none';
+
+  claudeField.style.display = isClaudeVision ? 'block' : 'none';
+  claudeNote.style.display = isClaudeVision ? 'block' : 'none';
+  glossaryField.style.display = isClaudeVision ? 'block' : 'none';
+
+  // Usage panel reflects whichever side of the pipeline has a meaningful cap
+  let cfg;
+  if (isClaudeVision) cfg = OCR_LIMITS.claude;
+  else if (isGoogleOcr) cfg = OCR_LIMITS.google;
+  else cfg = TRANSLATOR_LIMITS[providerSelect.value];
+
+  CURRENT_CFG = cfg;
+  DAILY_LIMIT = cfg.limit;
+  USAGE_UNIT = cfg.unit;
+  usagePanelLabel.textContent = cfg.label;
+
+  // Load persisted count for this pipeline's current period (auto-resets
+  // on month/day rollover via loadUsage)
+  charCount = loadUsage(cfg);
+  usageWarned = CURRENT_CFG.period !== 'session' && (charCount / DAILY_LIMIT >= 0.9);
+  renderCharUsage();
+
+  // Switching pipelines invalidates rolling translation context / dedup state
+  translationHistory = [];
+  lastJapaneseText = '';
+  lastFrameHash = null;
+}
+
+ocrSelect.addEventListener('change', updatePipelineUI);
+providerSelect.addEventListener('change', updatePipelineUI);
+updatePipelineUI();
+
+// ── Helpers ──
+function setStatus(state, label) {
+  statusDot.className = 'status-dot ' + (state || '');
+  statusText.textContent = label;
+}
+
+function showToast(msg, duration = 4000) {
+  toast.textContent = msg;
+  toast.style.display = 'block';
+  setTimeout(() => { toast.style.display = 'none'; }, duration);
+}
+
+function containsJapanese(text) {
+  return /[\u3040-\u30FF\u4E00-\u9FAF\uFF65-\uFF9F]/.test(text);
+}
+
+// Characters allowed alongside Japanese: kana, kanji, fullwidth punctuation,
+// digits, and common ASCII punctuation that legitimately appears in JP text
+// (e.g. ellipses written as periods, exclamation marks).
+const ALLOWED_CHARS = /[\u3040-\u30FF\u4E00-\u9FAF\uFF65-\uFF9F0-9。、！？「」『』（）…ー〜・\s]/;
+
+function extractJapanese(text) {
+  return text
+    .split('\n')
+    .filter(l => containsJapanese(l))
+    .map(l => l.split('').filter(ch => ALLOWED_CHARS.test(ch)).join(''))
+    .join('\n')
+    .trim();
+}
+
+// Updates the bar/text display from the current charCount, without
+// changing it. Also shows when the counter will next reset.
+function renderCharUsage() {
+  const pct = Math.min((charCount / DAILY_LIMIT) * 100, 100);
+  charBar.style.width = pct + '%';
+  charBar.className = 'char-bar' + (pct > 90 ? ' danger' : pct > 70 ? ' warning' : '');
+
+  let label;
+  if (USAGE_UNIT === 'requests' && CURRENT_CFG.period === 'session') {
+    label = charCount.toLocaleString() + ' requests this session';
+  } else if (USAGE_UNIT === 'requests') {
+    label = charCount.toLocaleString() + ' / ' + DAILY_LIMIT.toLocaleString() + ' requests';
+  } else {
+    label = charCount.toLocaleString() + ' / ' + DAILY_LIMIT.toLocaleString();
+  }
+  charText.textContent = label;
+
+  // Show reset timing for persisted (monthly/daily) counters
+  if (CURRENT_CFG.period === 'month') {
+    usageResetNote.textContent = 'Resets 1st of next month';
+    usageResetNote.style.display = 'block';
+  } else if (CURRENT_CFG.period === 'day') {
+    usageResetNote.textContent = 'Resets at midnight';
+    usageResetNote.style.display = 'block';
+  } else {
+    usageResetNote.style.display = 'none';
+  }
+}
+
+// Renders a snapshot of usage across every trackable pipeline option,
+// so the choice between e.g. Google Vision vs DeepL can be made with
+// full information about how close each is to its limit.
+function renderUsageOverview() {
+  const allConfigs = [
+    ...Object.values(TRANSLATOR_LIMITS),
+    OCR_LIMITS.google
+    // Claude Vision is session-only and not persisted — excluded here
+  ];
+
+  usageOverview.innerHTML = '';
+
+  allConfigs.forEach(cfg => {
+    const count = loadUsage(cfg);
+    const pct = Math.min((count / cfg.limit) * 100, 100);
+    const isCurrent = cfg.key === CURRENT_CFG.key;
+
+    const row = document.createElement('div');
+    row.className = 'usage-row';
+
+    const head = document.createElement('div');
+    head.className = 'usage-row-head';
+
+    const name = document.createElement('span');
+    name.className = 'usage-row-name' + (isCurrent ? ' is-current' : '');
+    name.textContent = cfg.name;
+
+    const value = document.createElement('span');
+    value.className = 'usage-row-value';
+    value.textContent = count.toLocaleString() + ' / ' + cfg.limit.toLocaleString() +
+      (cfg.unit === 'requests' ? ' req' : ' chars');
+
+    head.appendChild(name);
+    head.appendChild(value);
+
+    const barWrap = document.createElement('div');
+    barWrap.className = 'usage-row-bar-wrap';
+    const bar = document.createElement('div');
+    bar.className = 'usage-row-bar' + (pct > 90 ? ' danger' : pct > 70 ? ' warning' : '');
+    bar.style.width = pct + '%';
+    barWrap.appendChild(bar);
+
+    const reset = document.createElement('div');
+    reset.className = 'usage-row-reset';
+    reset.textContent = cfg.period === 'month' ? 'Resets 1st of next month' : 'Resets at midnight';
+
+    row.appendChild(head);
+    row.appendChild(barWrap);
+    row.appendChild(reset);
+    usageOverview.appendChild(row);
+  });
+}
+
+// Increments usage, persists it (if applicable), and re-renders.
+function updateCharUsage(added) {
+  charCount += added;
+  saveUsage(CURRENT_CFG, charCount);
+  renderCharUsage();
+
+  if (CURRENT_CFG.period !== 'session' && !usageWarned && charCount / DAILY_LIMIT >= 0.9) {
+    usageWarned = true;
+    const periodLabel = CURRENT_CFG.period === 'month' ? 'this month' : 'today';
+    showToast(`Heads up — ${CURRENT_CFG.label.replace(/^(Monthly|Daily) Usage \(/, '').replace(')', '')} usage is over 90% ${periodLabel}.`, 6000);
+  }
+
+  if (settingsModal.classList.contains('active')) renderUsageOverview();
+}
+
+function addTranslationCard(japanese, english) {
+  emptyState.style.display = 'none';
+  document.querySelectorAll('.t-card.new-translation').forEach(c => c.classList.remove('new-translation'));
+  const now = new Date();
+  const timeStr = now.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+  const card = document.createElement('div');
+  card.className = 't-card new-translation';
+  card.innerHTML = `
+    <div class="t-card-row">
+      <div class="t-half"><div class="t-lang">Japanese</div><div class="t-text-ja">${japanese.replace(/\n/g,'<br>')}</div></div>
+      <div class="t-half"><div class="t-lang">English</div><div class="t-text-en">${english.replace(/\n/g,'<br>')}</div></div>
+    </div>
+    <div class="t-time">${timeStr}</div>`;
+  feed.prepend(card);
+  const cards = feed.querySelectorAll('.t-card');
+  if (cards.length > 30) cards[cards.length - 1].remove();
+  toolbarStatus.textContent = 'Last translation at ' + timeStr;
+}
+
+// ── OCR Worker ──
+async function initWorker() {
+  if (worker) return;
+  toolbarStatus.textContent = 'Loading Japanese OCR engine…';
+  worker = await Tesseract.createWorker('jpn', 1, {
+    logger: m => {
+      if (m.status === 'recognizing text') {
+        toolbarStatus.textContent = 'Scanning… ' + Math.round(m.progress * 100) + '%';
+      }
+    }
+  });
+
+  // Restrict recognition to Japanese script + common punctuation.
+  // Without this, Tesseract's jpn model will sometimes substitute
+  // visually-similar Latin letters for hiragana/katakana glyphs
+  // (especially with small pixel-font dialogue boxes), which then
+  // pollutes the text sent to the translator.
+  const JP_WHITELIST =
+    'ぁあぃいぅうぇえぉおかがきぎくぐけげこごさざしじすずせぜそぞただちぢっつづてでとどなにぬねのはばぱひびぴふぶぷへべぺほぼぽまみむめもゃやゅゆょよらりるれろわをんゔー' +
+    'ァアィイゥウェエォオカガキギクグケゲコゴサザシジスズセゼソゾタダチヂッツヅテデトドナニヌネノハバパヒビピフブプヘベペホボポマミムメモャヤュユョヨラリルレロワヲンヴー・' +
+    '0123456789' +
+    '。、！？「」『』（）…ー〜・　 \n';
+
+  await worker.setParameters({
+    tessedit_char_whitelist: JP_WHITELIST,
+    // PSM 6: treat the crop as a single uniform block of text — works
+    // better than full-page segmentation for small dialogue-box crops.
+    tessedit_pageseg_mode: '6'
+  });
+
+  toolbarStatus.textContent = 'OCR ready. Watching for Japanese text…';
+}
+
+// ── Translation ──
+async function translate(text) {
+  if (providerSelect.value === 'deepl') {
+    return translateDeepL(text);
+  }
+  const email = emailInput.value.trim();
+  const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=ja|en${email ? '&de=' + encodeURIComponent(email) : ''}`;
+  const res = await fetch(url);
+  const data = await res.json();
+  if (data.responseStatus === 200 && data.responseData?.translatedText) return data.responseData.translatedText;
+  throw new Error(data.responseDetails || 'Translation failed');
+}
+
+async function translateDeepL(text) {
+  const key = deeplKeyInput.value.trim();
+  if (!key) throw new Error('No DeepL API key set');
+
+  const customProxy = deeplProxyInput.value.trim();
+
+  let fetchUrl, fetchBody, fetchHeaders;
+
+  if (customProxy) {
+    // Self-hosted Cloudflare Worker proxy: send straight to it, it
+    // forwards to DeepL itself (handles api vs api-free routing).
+    fetchUrl = customProxy.replace(/\/$/, '');
+    fetchHeaders = {
+      'Authorization': `DeepL-Auth-Key ${key}`,
+      'Content-Type': 'application/json'
+    };
+    fetchBody = JSON.stringify({ text: [text], source_lang: 'JA', target_lang: 'EN' });
+  } else {
+    // Fallback: public corsproxy.io wrapping DeepL directly.
+    const base = key.endsWith(':fx') ? 'https://api-free.deepl.com' : 'https://api.deepl.com';
+    const targetUrl = `${base}/v2/translate`;
+    fetchUrl = `https://corsproxy.io/?url=${encodeURIComponent(targetUrl)}`;
+    fetchHeaders = {
+      'Authorization': `DeepL-Auth-Key ${key}`,
+      'Content-Type': 'application/json'
+    };
+    fetchBody = JSON.stringify({ text: [text], source_lang: 'JA', target_lang: 'EN' });
+  }
+
+  let res;
+  try {
+    res = await fetch(fetchUrl, { method: 'POST', headers: fetchHeaders, body: fetchBody });
+  } catch (e) {
+    throw new Error('DeepL request failed (network/CORS): ' + e.message);
+  }
+
+  if (!res.ok) {
+    let detail = '';
+    try { detail = await res.text(); } catch {}
+    if (res.status === 403) throw new Error('DeepL rejected the API key (403) — check it was copied correctly.');
+    if (res.status === 456) throw new Error('DeepL quota exceeded (456) — translation limit reached for this key.');
+    throw new Error(`DeepL error ${res.status}${detail ? ': ' + detail.slice(0, 120) : ''}`);
+  }
+
+  const data = await res.json();
+  const translated = data?.translations?.[0]?.text;
+  if (!translated) throw new Error('DeepL returned no translation');
+  return translated;
+}
+
+// ── Crop the frame ──
+function getCroppedCanvas(sourceCanvas) {
+  if (!cropRegion) return sourceCanvas;
+  const sw = sourceCanvas.width;
+  const sh = sourceCanvas.height;
+  const cx = Math.round(cropRegion.x * sw);
+  const cy = Math.round(cropRegion.y * sh);
+  const cw = Math.round(cropRegion.w * sw);
+  const ch = Math.round(cropRegion.h * sh);
+  const out = document.createElement('canvas');
+  out.width = cw;
+  out.height = ch;
+  out.getContext('2d').drawImage(sourceCanvas, cx, cy, cw, ch, 0, 0, cw, ch);
+  return out;
+}
+
+// ── Cheap perceptual hash of a canvas, used to skip OCR on unchanged frames ──
+// Downscales to a small fixed size and returns a string of quantized
+// grayscale values. Cheap enough to run every scan tick.
+function computeFrameHash(canvas) {
+  const size = 24;
+  const tmp = document.createElement('canvas');
+  tmp.width = size;
+  tmp.height = size;
+  const ctx = tmp.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(canvas, 0, 0, size, size);
+  const { data } = ctx.getImageData(0, 0, size, size);
+  let hash = '';
+  for (let i = 0; i < data.length; i += 4) {
+    const gray = (data[i] + data[i + 1] + data[i + 2]) / 3;
+    // Quantize to 16 levels to absorb minor noise/compression artifacts
+    hash += (gray >> 4).toString(16);
+  }
+  return hash;
+}
+
+// Compare two hashes, returning true if "close enough" to count as the same
+// frame (allows a small number of differing cells for noise tolerance).
+function framesMatch(hashA, hashB, tolerance = 3) {
+  if (!hashA || !hashB || hashA.length !== hashB.length) return false;
+  let diff = 0;
+  for (let i = 0; i < hashA.length; i++) {
+    if (hashA[i] !== hashB[i]) {
+      diff++;
+      if (diff > tolerance) return false;
+    }
+  }
+  return true;
+}
+
+// ── Update crop preview strip ──
+function updateCropPreview(fullCanvas) {
+  if (!cropRegion) return;
+  const cropped = getCroppedCanvas(fullCanvas);
+  // Scale up for visibility — Game Boy text is tiny
+  const scale = Math.max(1, Math.min(4, 280 / cropped.width));
+  cropPreviewCanvas.width = cropped.width * scale;
+  cropPreviewCanvas.height = cropped.height * scale;
+  const ctx = cropPreviewCanvas.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(cropped, 0, 0, cropPreviewCanvas.width, cropPreviewCanvas.height);
+  cropDims.textContent = cropped.width + '×' + cropped.height + 'px';
+}
+
+// ── Capture + process ──
+async function captureAndProcess() {
+  if (!videoEl || isScanning) return;
+  const ocrEngine = ocrSelect.value; // tesseract | google | claude
+  if (ocrEngine === 'tesseract' && !worker) {
+    toolbarStatus.textContent = 'Loading Japanese OCR engine…';
+    initWorker(); // lazy-load if user switched engine mid-session
+    return;
+  }
+  isScanning = true;
+  scanningBadge.style.display = 'inline-flex';
+  setStatus('scanning', 'scanning');
+
+  try {
+    // Draw full frame
+    const fullCanvas = document.createElement('canvas');
+    fullCanvas.width = videoEl.videoWidth;
+    fullCanvas.height = videoEl.videoHeight;
+    fullCanvas.getContext('2d').drawImage(videoEl, 0, 0);
+
+    // Update crop preview
+    updateCropPreview(fullCanvas);
+
+    // Get cropped region
+    const ocrCanvas = getCroppedCanvas(fullCanvas);
+
+    // Skip processing entirely if this frame looks the same as the last one —
+    // avoids re-translating an unchanged screen on every tick.
+    const frameHash = computeFrameHash(ocrCanvas);
+    if (framesMatch(frameHash, lastFrameHash)) {
+      toolbarStatus.textContent = 'Screen unchanged — skipped.';
+      return;
+    }
+    lastFrameHash = frameHash;
+
+    if (ocrEngine === 'claude') {
+      try {
+        await processWithClaudeVision(ocrCanvas);
+      } catch (e) {
+        showToast('Translation error: ' + e.message);
+      }
+    } else if (ocrEngine === 'google') {
+      try {
+        await processWithGoogleVision(ocrCanvas);
+      } catch (e) {
+        showToast('OCR/translation error: ' + e.message);
+      }
+    } else {
+      await processWithTesseract(ocrCanvas);
+    }
+  } catch (e) {
+    console.error(e);
+  } finally {
+    isScanning = false;
+    scanningBadge.style.display = 'none';
+    setStatus('active', 'live');
+  }
+}
+
+// ── Tesseract OCR + MyMemory/DeepL translation path ──
+async function processWithTesseract(ocrCanvas) {
+  // Upscale small crops — Tesseract works better with larger glyphs,
+  // especially for pixel/bitmap game fonts. Nearest-neighbour keeps
+  // edges crisp rather than blurring them.
+  let finalCanvas = ocrCanvas;
+  if (ocrCanvas.width < 600) {
+    const scale = Math.ceil(600 / ocrCanvas.width);
+    finalCanvas = document.createElement('canvas');
+    finalCanvas.width = ocrCanvas.width * scale;
+    finalCanvas.height = ocrCanvas.height * scale;
+    const fctx = finalCanvas.getContext('2d');
+    fctx.imageSmoothingEnabled = false;
+    fctx.drawImage(ocrCanvas, 0, 0, finalCanvas.width, finalCanvas.height);
+  }
+
+  const { data } = await worker.recognize(finalCanvas);
+  const japanese = extractJapanese(data.text.trim());
+  rawText.textContent = japanese || '(no Japanese detected)';
+
+  if (japanese && japanese !== lastJapaneseText && japanese.length > 1) {
+    lastJapaneseText = japanese;
+    updateCharUsage(japanese.length);
+    if (charCount >= DAILY_LIMIT) {
+      showToast('Daily character limit reached.');
+      return;
+    }
+    try {
+      const english = await translate(japanese);
+      addTranslationCard(japanese, english);
+    } catch (e) {
+      showToast('Translation error: ' + e.message);
+    }
+  }
+}
+
+// ── Google Cloud Vision OCR + MyMemory/DeepL translation ──
+async function processWithGoogleVision(ocrCanvas) {
+  const key = googleKeyInput.value.trim();
+  if (!key) {
+    showToast('No Google Cloud Vision API key set — add one in Settings.');
+    return;
+  }
+
+  const base64 = ocrCanvas.toDataURL('image/png').split(',')[1];
+
+  let res;
+  try {
+    res = await fetch(`https://vision.googleapis.com/v1/images:annotate?key=${encodeURIComponent(key)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        requests: [{
+          image: { content: base64 },
+          features: [{ type: 'TEXT_DETECTION' }],
+          imageContext: { languageHints: ['ja'] }
+        }]
+      })
+    });
+  } catch (e) {
+    // If this fails as a CORS error, Google Vision may need to be
+    // routed through a proxy (e.g. your Cloudflare Worker) the same
+    // way DeepL is — check the browser console for the exact error.
+    throw new Error('Google Vision request failed (network/CORS): ' + e.message);
+  }
+
+  if (!res.ok) {
+    let detail = '';
+    try { detail = (await res.json())?.error?.message || ''; } catch {}
+    if (res.status === 400) throw new Error('Google Vision rejected the request (400) — check the API key and that the Vision API is enabled.');
+    if (res.status === 403) throw new Error('Google Vision rejected the API key (403) — check billing is enabled on the project.');
+    throw new Error(`Google Vision error ${res.status}${detail ? ': ' + detail.slice(0, 150) : ''}`);
+  }
+
+  const data = await res.json();
+  const annotation = data?.responses?.[0];
+  if (annotation?.error) throw new Error('Google Vision error: ' + annotation.error.message);
+
+  const rawOcrText = annotation?.fullTextAnnotation?.text || '';
+  const japanese = extractJapanese(rawOcrText.trim());
+  rawText.textContent = japanese || '(no Japanese detected)';
+
+  updateCharUsage(1); // count requests against the 1,000/month free tier
+
+  if (japanese && japanese !== lastJapaneseText && japanese.length > 1) {
+    lastJapaneseText = japanese;
+    if (charCount >= DAILY_LIMIT) {
+      showToast('Google Vision monthly free tier limit reached.');
+      return;
+    }
+    try {
+      const english = await translate(japanese);
+      addTranslationCard(japanese, english);
+    } catch (e) {
+      showToast('Translation error: ' + e.message);
+    }
+  }
+}
+
+// ── Claude Vision OCR + translation in one step ──
+async function processWithClaudeVision(ocrCanvas) {
+  const key = claudeKeyInput.value.trim();
+  if (!key) {
+    showToast('No Anthropic API key set — add one in Settings.');
+    return;
+  }
+
+  // Modest upscale helps the model resolve small pixel-font glyphs
+  let imgCanvas = ocrCanvas;
+  if (ocrCanvas.width < 500) {
+    const scale = Math.ceil(500 / ocrCanvas.width);
+    imgCanvas = document.createElement('canvas');
+    imgCanvas.width = ocrCanvas.width * scale;
+    imgCanvas.height = ocrCanvas.height * scale;
+    const ictx = imgCanvas.getContext('2d');
+    ictx.imageSmoothingEnabled = false;
+    ictx.drawImage(ocrCanvas, 0, 0, imgCanvas.width, imgCanvas.height);
+  }
+
+  const base64 = imgCanvas.toDataURL('image/png').split(',')[1];
+
+  const operatorName = OPERATORS[operatorSelect.value]?.label || 'Game Boy';
+
+  let contextBlock = '';
+  if (translationHistory.length) {
+    contextBlock = '\n\nFor continuity, here is the recently translated dialogue, most recent last:\n' +
+      translationHistory.map(h => `JP: ${h.japanese}\nEN: ${h.english}`).join('\n\n');
+  }
+
+  let glossaryBlock = '';
+  const glossaryLines = glossaryInput.value
+    .split('\n')
+    .map(l => l.trim())
+    .filter(l => l && l.includes('='));
+  if (glossaryLines.length) {
+    glossaryBlock = '\n\nUse these established translations for the following terms whenever they appear, ' +
+      'instead of choosing your own:\n' +
+      glossaryLines.map(l => {
+        const [jp, en] = l.split('=').map(s => s.trim());
+        return `${jp} = ${en}`;
+      }).join('\n');
+  }
+
+  const promptText =
+    `This image is a cropped screenshot of dialogue text from a retro Japanese video game, ` +
+    `captured from a ${operatorName} (a Game Boy / Game Boy Pocket / Game Boy Color / Game Boy Advance hardware adapter for streaming the original console output, depending on era). ` +
+    `The font is a small pixel/bitmap font, which can make some characters ambiguous.\n\n` +
+    `Read the Japanese text exactly as displayed (preserve original line breaks where they fall naturally), then provide a natural English translation. ` +
+    `Use context — Japanese often omits subjects/objects, and pronouns, formality level, and tone should be inferred from the situation and any prior dialogue provided. ` +
+    `Keep established translations for any recurring names, places, or terms consistent with the prior dialogue if given.\n\n` +
+    `If the image contains no readable Japanese text (e.g. it's a blank box, a menu with no dialogue, or pure decoration), respond with japanese and english both set to empty strings.` +
+    contextBlock +
+    glossaryBlock;
+
+  let res;
+  try {
+    res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': key,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true'
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 600,
+        system: 'You are an expert Japanese-to-English video game translator. Always respond with ONLY a JSON object of the form {"japanese": "...", "english": "..."} and nothing else — no markdown fences, no preamble.',
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'image', source: { type: 'base64', media_type: 'image/png', data: base64 } },
+            { type: 'text', text: promptText }
+          ]
+        }]
+      })
+    });
+  } catch (e) {
+    throw new Error('Claude API request failed (network): ' + e.message);
+  }
+
+  if (!res.ok) {
+    let detail = '';
+    try { detail = (await res.json())?.error?.message || ''; } catch {}
+    if (res.status === 401) throw new Error('Claude rejected the API key (401) — check it in Settings.');
+    if (res.status === 429) throw new Error('Claude rate limit hit (429) — try a longer scan interval.');
+    throw new Error(`Claude error ${res.status}${detail ? ': ' + detail.slice(0, 150) : ''}`);
+  }
+
+  const data = await res.json();
+  const textBlock = data?.content?.find(b => b.type === 'text')?.text || '';
+
+  let parsed;
+  try {
+    const clean = textBlock.replace(/```json|```/g, '').trim();
+    parsed = JSON.parse(clean);
+  } catch (e) {
+    throw new Error('Could not parse Claude response as JSON');
+  }
+
+  const japanese = (parsed.japanese || '').trim();
+  const english = (parsed.english || '').trim();
+
+  updateCharUsage(1); // count requests, not characters, for Claude
+
+  rawText.textContent = japanese || '(no Japanese detected)';
+
+  if (japanese && japanese !== lastJapaneseText) {
+    lastJapaneseText = japanese;
+    if (english) {
+      addTranslationCard(japanese, english);
+      translationHistory.push({ japanese, english });
+      if (translationHistory.length > MAX_HISTORY) translationHistory.shift();
+    }
+  }
+}
+function startPreviewLoop() {
+  const ctx = previewCanvas.getContext('2d');
+  function draw() {
+    if (!videoEl || !stream) return;
+    previewCanvas.width = videoEl.videoWidth || 800;
+    previewCanvas.height = videoEl.videoHeight || 200;
+    ctx.drawImage(videoEl, 0, 0);
+
+    // Draw crop overlay on preview
+    if (cropRegion) {
+      const pw = previewCanvas.width;
+      const ph = previewCanvas.height;
+      ctx.fillStyle = 'rgba(0,0,0,0.45)';
+      // Top strip
+      ctx.fillRect(0, 0, pw, cropRegion.y * ph);
+      // Bottom strip
+      ctx.fillRect(0, (cropRegion.y + cropRegion.h) * ph, pw, ph);
+      // Left strip
+      ctx.fillRect(0, cropRegion.y * ph, cropRegion.x * pw, cropRegion.h * ph);
+      // Right strip
+      ctx.fillRect((cropRegion.x + cropRegion.w) * pw, cropRegion.y * ph, pw, cropRegion.h * ph);
+      // Border
+      ctx.strokeStyle = '#00e5ff';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(cropRegion.x * pw, cropRegion.y * ph, cropRegion.w * pw, cropRegion.h * ph);
+    }
+
+    requestAnimationFrame(draw);
+  }
+  draw();
+}
+
+// ── Start capture ──
+async function startCapture() {
+  try {
+    stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 5 }, audio: false });
+    videoEl = document.createElement('video');
+    videoEl.srcObject = stream;
+    videoEl.muted = true;
+    await videoEl.play();
+
+    screenPreview.style.display = 'block';
+    emptyState.style.display = 'none';
+    captureToggle.textContent = 'Stop';
+    captureToggle.classList.add('is-active');
+    cropBtn.disabled = false;
+    setStatus('', 'idle');
+    toolbarStatus.textContent = 'Capture active. Draw a crop region to start scanning…';
+
+    startPreviewLoop();
+
+    // Load OCR worker in the background — don't block opening the
+    // crop modal, since scanning won't start until crop is set anyway.
+    // Only needed when Tesseract is the chosen OCR engine.
+    if (ocrSelect.value === 'tesseract') {
+      initWorker();
+    }
+
+    stream.getVideoTracks()[0].addEventListener('ended', stopCapture);
+
+    // Open crop modal automatically — scanning won't begin until a
+    // region is confirmed or the user chooses to scan full screen.
+    openCropModal();
+  } catch (e) {
+    if (e.name !== 'NotAllowedError') showToast('Could not start capture: ' + e.message);
+    setStatus('', 'idle');
+  }
+}
+
+// ── Begin OCR/translation loop (called after crop is set or skipped) ──
+function beginScanning() {
+  if (captureInterval) clearInterval(captureInterval);
+  lastFrameHash = null;
+  lastJapaneseText = '';
+  const ms = parseFloat(intervalSlider.value) * 1000;
+  captureInterval = setInterval(captureAndProcess, ms);
+  scanningStarted = true;
+  setStatus('active', 'live');
+}
+
+// ── Stop capture ──
+function stopCapture() {
+  if (captureInterval) { clearInterval(captureInterval); captureInterval = null; }
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+  videoEl = null;
+  captureToggle.textContent = 'Capture Playback Window';
+  captureToggle.classList.remove('is-active');
+  cropBtn.disabled = true;
+  setStatus('', 'idle');
+  screenPreview.style.display = 'none';
+  toolbarStatus.textContent = 'Capture stopped.';
+  lastJapaneseText = '';
+  lastFrameHash = null;
+  scanningStarted = false;
+  cropRegion = null;
+  cropIndicator.style.display = 'none';
+  cropPreviewWrap.style.display = 'none';
+  noCropNote.style.display = 'block';
+  noCropNote.textContent = 'No crop set — capture is paused until a region is set or you choose to scan full screen.';
+}
+
+captureToggle.addEventListener('click', () => {
+  if (stream) {
+    stopCapture();
+  } else {
+    startCapture();
+  }
+});
+
+clearBtn.addEventListener('click', () => {
+  feed.innerHTML = '';
+  rawText.textContent = '—';
+  lastJapaneseText = '';
+  emptyState.style.display = stream ? 'none' : 'flex';
+  toolbarStatus.textContent = stream ? 'Results cleared. Watching for new text…' : 'Results cleared.';
+});
+
+// ── Crop modal logic ──
+let cropDrag = { active: false, startX: 0, startY: 0, endX: 0, endY: 0 };
+
+function openCropModal() {
+  if (!videoEl || !videoEl.videoWidth) {
+    showToast('Video not ready yet — try again in a moment.');
+    return;
+  }
+
+  // Show modal first so layout/sizing is correct, then draw
+  cropModal.classList.add('active');
+
+  // Compute a render size that fits within BOTH 90vw and 70vh,
+  // preserving the source video's aspect ratio.
+  const maxW = window.innerWidth * 0.9;
+  const maxH = window.innerHeight * 0.7;
+  const srcW = videoEl.videoWidth;
+  const srcH = videoEl.videoHeight;
+  const scale = Math.min(1, maxW / srcW, maxH / srcH);
+  const w = Math.round(srcW * scale);
+  const h = Math.round(srcH * scale);
+
+  cropVideoCanvas.width = w;
+  cropVideoCanvas.height = h;
+  cropVideoCanvas.style.width = w + 'px';
+  cropVideoCanvas.style.height = h + 'px';
+  cropVideoCanvas.getContext('2d').drawImage(videoEl, 0, 0, w, h);
+
+  // Match overlay size exactly (both attribute and CSS size) to the
+  // video canvas's rendered size — no separate max-width/max-height
+  // computation that could drift out of sync.
+  cropOverlayCanvas.width = w;
+  cropOverlayCanvas.height = h;
+  cropOverlayCanvas.style.width = w + 'px';
+  cropOverlayCanvas.style.height = h + 'px';
+
+  cropContainer.style.width = w + 'px';
+  cropContainer.style.height = h + 'px';
+
+  cropDrag = { active: false, startX: 0, startY: 0, endX: 0, endY: 0 };
+  clearCropOverlay();
+
+  // "Cancel" behaves differently depending on whether scanning has
+  // already started elsewhere in this session.
+  cropCancel.textContent = scanningStarted ? 'Cancel' : 'Cancel (stop capture)';
+}
+
+cropBtn.addEventListener('click', openCropModal);
+
+function getRelativePos(e) {
+  const rect = cropOverlayCanvas.getBoundingClientRect();
+  const clientX = Math.max(rect.left, Math.min(rect.right, e.clientX));
+  const clientY = Math.max(rect.top, Math.min(rect.bottom, e.clientY));
+  return {
+    x: Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)),
+    y: Math.max(0, Math.min(1, (clientY - rect.top) / rect.height))
+  };
+}
+
+function clearCropOverlay() {
+  const ctx = cropOverlayCanvas.getContext('2d');
+  ctx.clearRect(0, 0, cropOverlayCanvas.width, cropOverlayCanvas.height);
+}
+
+function drawCropRect(x1f, y1f, x2f, y2f) {
+  const ctx = cropOverlayCanvas.getContext('2d');
+  const cw = cropOverlayCanvas.width;
+  const ch = cropOverlayCanvas.height;
+  ctx.clearRect(0, 0, cw, ch);
+
+  const x1 = Math.min(x1f, x2f) * cw;
+  const y1 = Math.min(y1f, y2f) * ch;
+  const w = Math.abs(x2f - x1f) * cw;
+  const h = Math.abs(y2f - y1f) * ch;
+
+  // Dim outside
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.fillRect(0, 0, cw, y1);
+  ctx.fillRect(0, y1 + h, cw, ch);
+  ctx.fillRect(0, y1, x1, h);
+  ctx.fillRect(x1 + w, y1, cw, h);
+
+  // Selection box
+  ctx.strokeStyle = '#00e5ff';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(x1, y1, w, h);
+  ctx.fillStyle = 'rgba(0,229,255,0.06)';
+  ctx.fillRect(x1, y1, w, h);
+}
+
+cropOverlayCanvas.addEventListener('pointerdown', e => {
+  cropOverlayCanvas.setPointerCapture(e.pointerId);
+  const pos = getRelativePos(e);
+  cropDrag = { active: true, startX: pos.x, startY: pos.y, endX: pos.x, endY: pos.y };
+  drawCropRect(cropDrag.startX, cropDrag.startY, cropDrag.endX, cropDrag.endY);
+});
+
+cropOverlayCanvas.addEventListener('pointermove', e => {
+  if (!cropDrag.active) return;
+  const pos = getRelativePos(e);
+  cropDrag.endX = pos.x; cropDrag.endY = pos.y;
+  drawCropRect(cropDrag.startX, cropDrag.startY, cropDrag.endX, cropDrag.endY);
+});
+
+cropOverlayCanvas.addEventListener('pointerup', e => {
+  if (!cropDrag.active) return;
+  cropDrag.active = false;
+  const pos = getRelativePos(e);
+  cropDrag.endX = pos.x; cropDrag.endY = pos.y;
+  drawCropRect(cropDrag.startX, cropDrag.startY, cropDrag.endX, cropDrag.endY);
+});
+
+window.addEventListener('pointerup', e => {
+  // Catch releases that happen outside the canvas
+  if (cropDrag.active) {
+    cropDrag.active = false;
+  }
+});
+
+cropConfirm.addEventListener('click', () => {
+  const x1 = Math.min(cropDrag.startX, cropDrag.endX);
+  const y1 = Math.min(cropDrag.startY, cropDrag.endY);
+  const w = Math.abs(cropDrag.endX - cropDrag.startX);
+  const h = Math.abs(cropDrag.endY - cropDrag.startY);
+
+  if (w < 0.01 || h < 0.01) {
+    showToast('No region drawn — drag a box over the dialogue area first.');
+    return;
+  }
+
+  cropRegion = { x: x1, y: y1, w, h };
+  cropIndicator.style.display = 'inline-flex';
+  cropPreviewWrap.style.display = 'block';
+  noCropNote.style.display = 'none';
+
+  cropModal.classList.remove('active');
+  showToast('Crop region set — scanning that area only.', 2500);
+  toast.style.borderColor = 'var(--green)';
+  toast.style.color = 'var(--green)';
+  setTimeout(() => { toast.style.borderColor = 'var(--red)'; toast.style.color = 'var(--red)'; }, 2600);
+  toolbarStatus.textContent = 'Crop set. Scanning dialogue region only.';
+
+  // Show crop preview immediately
+  if (videoEl) {
+    const fullCanvas = document.createElement('canvas');
+    fullCanvas.width = videoEl.videoWidth;
+    fullCanvas.height = videoEl.videoHeight;
+    fullCanvas.getContext('2d').drawImage(videoEl, 0, 0);
+    updateCropPreview(fullCanvas);
+  }
+
+  beginScanning();
+});
+
+cropSkip.addEventListener('click', () => {
+  cropRegion = null;
+  cropIndicator.style.display = 'none';
+  cropPreviewWrap.style.display = 'none';
+  noCropNote.style.display = 'block';
+  noCropNote.textContent = 'No crop set — full screen is being scanned. Set a crop region to improve accuracy and reduce character usage.';
+
+  cropModal.classList.remove('active');
+  toolbarStatus.textContent = 'Scanning full screen.';
+  beginScanning();
+});
+
+cropCancel.addEventListener('click', () => {
+  cropModal.classList.remove('active');
+  // If scanning has never started, there's nothing useful happening
+  // behind the modal — stop the capture entirely.
+  if (!scanningStarted) {
+    stopCapture();
+  }
+});
+</script>
+</body>
+</html>
